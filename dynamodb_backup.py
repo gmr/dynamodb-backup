@@ -16,7 +16,7 @@ try:
 except ImportError:
     snappy = None
 
-__version__ = '0.1.1'
+__version__ = '0.1.2'
 
 LOGGER = logging.getLogger(__name__)
 
@@ -42,7 +42,6 @@ def backup(args):
         args.destination, json.load(args.schema), args.codec,
         validator=None if not args.skip_validation else True)
 
-    verbose = args.verbose or args.debug
     start_time = time.time()
 
     print('Preparing to backup {} from DynamoDB'.format(args.table))
