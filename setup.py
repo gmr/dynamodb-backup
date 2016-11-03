@@ -4,7 +4,7 @@ except ImportError:
     from distutils.core import setup
 
 setup(name='dynamodb-backup',
-      version='0.1.0',
+      version='0.1.1',
       classifiers=[
           'Development Status :: 3 - Alpha',
           'Environment :: Console',

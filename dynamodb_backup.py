@@ -16,7 +16,7 @@ try:
 except ImportError:
     snappy = None
 
-__version__ = '0.1.0'
+__version__ = '0.1.1'
 
 LOGGER = logging.getLogger(__name__)
 
