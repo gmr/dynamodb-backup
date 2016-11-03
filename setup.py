@@ -31,9 +31,9 @@ setup(name='dynamodb-backup',
       author_email='gavinmroy@gmail.com',
       py_modules=['dynamodb_backup'],
       package_data={'': ['LICENSE', 'README.rst']},
-      install_requires=['boto3', 'fastavro'],
+      install_requires=['boto3>=1.4.1,<1.5', 'fastavro>=0.11.0,<1'],
       zip_safe=True,
       entry_points={
           'console_scripts': ['dynamodb-backup=dynamodb_backup:main']
       },
-      extras_require={'snappy': ['snappy']})
+      extras_require={'snappy': ['python-snappy==0.5']})
