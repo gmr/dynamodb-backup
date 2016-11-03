@@ -28,24 +28,24 @@ Usage
 -----
 ::
 
-    usage: dynamodb-backup [-h] [-c {deflate,none}] [-s] [-v]
-                           schema table destination
+   dynamodb-backup --help
+   usage: dynamodb-backup [-h] [-c {snappy,none,deflate}] [-s] [-v]
+                          schema table destination
 
-    Backup a DynamoDB table to an Avro Container
+   Backup a DynamoDB table to an Avro Container
 
-    positional arguments:
-      schema                Avro Schema file to use
-      table                 DynamoDB table name
-      destination           Destination file path for the backup file
+   positional arguments:
+     schema                Avro Schema to use
+     table                 DynamoDB table name
+     destination           Destination file path for the backup file
 
-    optional arguments:
-      -h, --help            show this help message and exit
-      -c {deflate,none}, --codec {deflate,none}
-                            Compression Codec. Default: deflate
-      -s, --skip-validation
-                            Do not validate records against the avro schema
-      -v, --verbose         Verbose logging output
-
+   optional arguments:
+     -h, --help            show this help message and exit
+     -c {snappy,none,deflate}, --codec {snappy,none,deflate}
+                           Compression Codec. Default: deflate
+     -s, --skip-validation
+                           Do not validate records against the avro schema
+     -v, --verbose         Verbose logging output
 
 .. |Version| image:: https://img.shields.io/pypi/v/dynamodb-backup.svg?
    :target: https://pypi.python.org/pypi/dynamodb-backup
