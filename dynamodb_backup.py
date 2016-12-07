@@ -16,7 +16,7 @@ try:
 except ImportError:
     snappy = None
 
-__version__ = '0.1.2'
+__version__ = '0.2.0'
 
 LOGGER = logging.getLogger(__name__)
 
@@ -38,16 +38,16 @@ def backup(args):
     client = boto3.client('dynamodb')
     paginator = client.get_paginator('scan')
 
-    writer = fastavro._writer.Writer(
-        args.destination, json.load(args.schema), args.codec,
-        validator=None if not args.skip_validation else True)
-
     start_time = time.time()
-
     print('Preparing to backup {} from DynamoDB'.format(args.table))
 
     try:
-        _backup(paginator, args.table, writer)
+        with open(args.destination, 'wb') as handle:
+            fastavro.writer(
+                handle, json.load(args.schema),
+                _backup(paginator, args.table),
+                args.codec,
+                validator=None if not args.skip_validation else True)
     except KeyboardInterrupt:
         print('CTRL-C caught, aborting backup')
 
@@ -55,12 +55,11 @@ def backup(args):
           'in {:.2f} seconds'.format(records, units, time.time() - start_time))
 
 
-def _backup(paginator, table, writer):
-    """Process the backup
+def _backup(paginator, table):
+    """Generator to return the records from the DynamoDB table
 
     :param boto3.paginator.Paginator paginator: The paginator for getting data
     :param str table: The table name to backup
-    :param fastavro._writer.Writer writer: The Avro container writer
 
     """
     global records, units
@@ -70,9 +69,8 @@ def _backup(paginator, table, writer):
                                    ReturnConsumedCapacity='TOTAL'):
         units += page['ConsumedCapacity']['CapacityUnits']
         for record in [_unmarshall(item) for item in page.get('Items', [])]:
-            writer.write(record)
+            yield record
             records += 1
-        writer.flush()
         LOGGER.debug('%i records written, %i in the last page',
                      records, page['Count'])
 
@@ -109,7 +107,6 @@ def parse_cli_args():
     parser.add_argument('table', action='store',
                         help='DynamoDB table name')
     parser.add_argument('destination', action='store',
-                        type=argparse.FileType('wb'),
                         help='Destination file path for the backup file')
     return parser.parse_args()
 
