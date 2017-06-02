@@ -7,10 +7,10 @@ import argparse
 import base64
 import coloredlogs
 import datetime
-import io
 import json
 import logging
 import sys
+import tempfile
 import time
 
 import boto3
@@ -21,7 +21,7 @@ try:
 except ImportError:
     snappy = None
 
-__version__ = '0.3.0'
+__version__ = '0.4.0'
 
 LOGGER = logging.getLogger(__name__)
 
@@ -60,7 +60,7 @@ def backup(args):
         handle = open(args.destination, 'wb')
         dest = args.destination
     elif args.bucket:
-        handle = io.BytesIO()
+        handle = tempfile.NamedTemporaryFile()
         dest = 's3://{}/{}'.format(args.bucket, args.prefix)
     else:
         LOGGER.error('ERROR: Must specify an error or an S3 bucket to use')
@@ -88,6 +88,7 @@ def backup(args):
         handle.close()
     elif args.bucket:
         _upload_to_s3(args, handle)
+        handle.close()
 
 
 def _backup(paginator, table):
@@ -220,7 +221,7 @@ def _upload_to_s3(args, handle):
     """Create the backup as a file on AmazonS3
 
     :param argparse.namespace args: The parsed CLI arguments
-    :param io.BytesIO handle: The BytesIO handle for the backup
+    :param file handle: The BytesIO handle for the backup
 
     """
     handle.seek(0)
