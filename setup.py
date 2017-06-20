@@ -18,7 +18,7 @@ def read_requirements_file(name):
 
 setuptools.setup(
     name='dynamodb-backup',
-    version='0.4.0',
+    version='0.5.0',
     classifiers=[
         'Development Status :: 3 - Alpha',
         'Environment :: Console',
