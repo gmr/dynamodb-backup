@@ -5,7 +5,6 @@ Backup DynamoDB to CSV or Avro
 """
 import argparse
 import base64
-import coloredlogs
 import csv
 import datetime
 import gzip
@@ -13,23 +12,24 @@ import io
 import json
 import logging
 import multiprocessing
-from urllib import parse
 import queue
 import sys
 import tempfile
-import threading
 import time
+from urllib import parse
 
 import boto3
-from boto3.s3 import transfer
+from botocore import exceptions
+import coloredlogs
 import fastavro
-import requests
+import httpx
 try:
     import snappy
 except ImportError:
     snappy = None
 
-__version__ = '0.5.0'
+from dynamodb_backup import version
+
 
 LOGGER = logging.getLogger(__name__)
 
@@ -45,6 +45,7 @@ LOGGING_FIELD_STYLES = {'hostname': {'color': 'magenta'},
                         'asctime': {'color': 'white'}}
 
 MAX_QUEUE_DEPTH = 100000
+
 
 class Process(multiprocessing.Process):
     """Child process for paginating from DynamoDB and putting rows in the work
@@ -73,12 +74,19 @@ class Process(multiprocessing.Process):
         paginator = client.get_paginator('scan')
         LOGGER.info('Starting to page through %s for segment %s of %s',
                     self.cliargs.table, self.segment, self.cliargs.processes)
-        for page in paginator.paginate(TableName=self.cliargs.table,
-                                       TotalSegments=self.cliargs.processes,
-                                       ConsistentRead=True,
-                                       PaginationConfig={'PageSize': 500},
-                                       ReturnConsumedCapacity='TOTAL',
-                                       Segment=self.segment):
+
+        kwargs = {'TableName': self.cliargs.table,
+                  'TotalSegments': self.cliargs.processes,
+                  'ConsistentRead': True,
+                  'PaginationConfig': {'PageSize': 500},
+                  'ReturnConsumedCapacity': 'TOTAL',
+                  'Segment': self.segment}
+
+        if self.cliargs.expression:
+            self.cliargs.expression.seek(0)
+            kwargs.update(json.load(self.cliargs.expression))
+
+        for page in paginator.paginate(**kwargs):
             for record in [_unmarshall(item) for item in
                            page.get('Items', [])]:
                 self.work_queue.put(record)
@@ -104,7 +112,7 @@ class QueueIterator:
 
         :param multiprocessing.Event error_exit: Set on error to stop
         :param multiprocessing.Queue work_queue: The queue to get records from
-        :param multiprocessing.Value units: Used to keep track of consumed units
+        :param multiprocessing.Value units: Keep track of consumed units
 
         """
         self.records = 0
@@ -141,6 +149,7 @@ class Writer:
     def __init__(self, args, iterator, error_exit):
         self.args = args
         self.error_exit = error_exit
+        self.file = None
         self.handle = self._get_handle()
         self.iterator = iterator
         self.s3uri = self.args.s3.rstrip('/') if self.args.s3 else None
@@ -169,19 +178,16 @@ class Writer:
         return open(self.args.file, 'wb')
 
     def _upload_to_s3(self):
-        """Create the backup as a file on AmazonS3
-
-        :param argparse.namespace args: The parsed CLI arguments
-        :param file handle: The BytesIO handle for the backup
-
-        """
+        """Create the backup as a file on AmazonS3"""
         parsed = parse.urlparse(self.s3uri, 's3')
         key = datetime.date.today().strftime(
             '/%Y/%m/%d/{}.{}'.format(self.args.table, self.extension))
         LOGGER.info('Uploading to s3://%s%s', parsed.netloc, key)
-        client = boto3.client('s3')
-        s3 = transfer.S3Transfer(client)
-        s3.upload_file(self.handle.name, parsed.netloc, key)
+        s3 = boto3.client('s3')
+        try:
+            s3.upload_file(self.handle.name, parsed.netloc, key)
+        except exceptions.ClientError as error:
+            LOGGER.error('Error uploading: %s', error)
 
 
 class AvroWriter(Writer):
@@ -191,7 +197,7 @@ class AvroWriter(Writer):
     def __init__(self, args, iterator, error_exit):
         super(AvroWriter, self).__init__(args, iterator, error_exit)
         if args.schema.startswith('http'):
-            response = requests.get(args.schema)
+            response = httpx.get(args.schema)
             self.schema = response.json()
         else:
             with open(args.schema, 'r') as handle:
@@ -252,12 +258,10 @@ def main():
     """Setup and run the backup."""
     args = _parse_cli_args()
     level = logging.DEBUG if args.verbose else logging.INFO
-    coloredlogs.install(level=level, fmt=LOGGING_FORMAT,
-                        field_styles=LOGGING_FIELD_STYLES)
+    coloredlogs.install(
+        level=level, fmt=LOGGING_FORMAT, field_styles=LOGGING_FIELD_STYLES)
     if args.verbose:
-        for logger in {
-                'boto3', 'botocore', 'requests',
-                'botocore.vendored.requests.packages.urllib3.connectionpool'}:
+        for logger in {'boto3', 'botocore', 'httpx'}:
             logging.getLogger(logger).setLevel(logging.WARNING)
     _execute(args)
 
@@ -307,7 +311,7 @@ def _execute(args):
 
     # All of the data has been added to the queue, wait for things to finish
     LOGGER.debug('Waiting for processes to finish')
-    while any([p.is_alive() for (p, d) in processes]):
+    while any(p.is_alive() for (p, d) in processes):
         try:
             time.sleep(0.1)
         except KeyboardInterrupt:
@@ -358,10 +362,15 @@ def _parse_cli_args():
                         metavar='COUNT',
                         help='Total number of processes for scan.')
 
+    filter = parser.add_argument_group('Filter Expression Options')
+    filter.add_argument('-e', '--expression', type=argparse.FileType('r'),
+                        help='A JSON file with filter expression '
+                             'kwargs for the paginator')
+
     parser.add_argument('-v', '--verbose', action='store_true',
                         help='Verbose logging output')
     parser.add_argument('--version', action='version',
-                        version='%(prog)s {}'.format(__version__))
+                        version='%(prog)s {}'.format(version))
 
     parser.add_argument('table', action='store', help='DynamoDB table name')
     return parser.parse_args()
@@ -385,7 +394,7 @@ def _unmarshall(values):
     :raises ValueError: if an unsupported type code is encountered
 
     """
-    return dict([(k, _unmarshall_dict(v)) for k, v in values.items()])
+    return {k: _unmarshall_dict(v) for k, v in values.items()}
 
 
 def _unmarshall_dict(value):
@@ -401,8 +410,7 @@ def _unmarshall_dict(value):
     if key == 'B':
         return base64.b64decode(value[key].encode('ascii'))
     elif key == 'BS':
-        return set([base64.b64decode(v.encode('ascii'))
-                    for v in value[key]])
+        return {base64.b64decode(v.encode('ascii')) for v in value[key]}
     elif key == 'BOOL':
         return value[key]
     elif key == 'L':
@@ -414,14 +422,9 @@ def _unmarshall_dict(value):
     elif key == 'N':
         return _to_number(value[key])
     elif key == 'NS':
-        return set([_to_number(v) for v in value[key]])
+        return {_to_number(v) for v in value[key]}
     elif key == 'S':
         return value[key]
     elif key == 'SS':
-        return set([v for v in value[key]])
+        return set(value[key])
     raise ValueError('Unsupported value type: %s' % key)
-
-
-
-if __name__ == '__main__':
-    main()
