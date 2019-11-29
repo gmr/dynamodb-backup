@@ -1,4 +1,0 @@
-boto3>=1.4.1,<1.5
-coloredlogs>=5.2,<6
-fastavro>=0.11.0,<1
-requests>=2.12.4,<3
